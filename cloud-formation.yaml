@@ -1,0 +1,342 @@
+Description: FridayHITT company's cloud formation template for estabhilishing a
+  small mini network
+Parameters:
+  InstanceTypeParameter:
+    Description: Ec2 instance instance type
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t2.nano
+      - t3.micro
+      - t3.nano
+  Environment:
+    Description: Parameter for environment asper the region
+    Type: String
+    Default: Development
+    AllowedValues:
+      - Development
+      - Production
+      - QualityORtesting
+
+Mappings:
+  AMIRegionMap:
+    us-east-1:
+      Development: ami-06b21ccaeff8cd686 #aws linux os
+      Production: ami-0866a3c8686eaeeba #ubuntu os
+      QualityORtesting: ami-0c82be92b15ae585f #mac os
+    eu-west-1:
+      Development: ami-00385a401487aefa4 #aws linux os
+      Production: ami-0d64bb532e0502c46 #ubuntu os
+      QualityORtesting: ami-094054baa258aef8c #mac os
+
+Resources:
+  #Creating a VPC network
+  HITTVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/24
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      Tags:
+        - Key: Name
+          Value: Custom_HITTVPC
+
+  #Creating a Internet Gateway 
+  HITTInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: HITTInternetGateway
+
+  #Attaching the internet gateway to VPC
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref HITTVPC
+      InternetGatewayId: !Ref HITTInternetGateway
+
+  #Creating a public Subnet
+  HITTPublicsubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref HITTVPC
+      CidrBlock: 10.0.0.0/25
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select
+        - 0
+        - !GetAZs ''
+      Tags:
+        - Key: Name
+          Value: HITTPublicsubnet
+
+  #Creating a route table for HITT-Publicsubnet
+  HITTPublicSubnetroutetable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref HITTVPC
+      Tags:
+        - Key: Name
+          Value: HITTPublicSubnetroutetable
+
+  #Creating a Route for HITT-Publicsubnet
+  HITTPublicroute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref HITTPublicSubnetroutetable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref HITTInternetGateway
+
+  #Creating a subnetAssociation
+  HITTpublicsubnetassociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref HITTPublicSubnetroutetable
+      SubnetId: !Ref HITTPublicsubnet
+
+  #Creating a Public Ec2 instance
+  HITTpubliceEc2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceTypeParameter
+      SubnetId: !Ref HITTPublicsubnet
+      VpcId: !Ref HITTVPC
+      ImageId: !FindInMap
+        - AMIRegionMap
+        - !Ref AWS::Region
+        - !Ref Environment
+      SecurityGroupIds:
+        - !Ref HITTPublicSecurityGroup
+      KeyName: Sidkey
+      Tags:
+        - Key: Name
+          Value: HITTpubliceEc2
+
+  #Creating Security Group for a public subnet
+  HITTPublicSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Open  ssh,https and http protocols
+      VpcId: !Ref HITTVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+      Tags:
+        - Key: Name
+          Value: HITTPublicSecurityGroup
+
+  #Creating Security Group for a jumpbox in public subnets 
+  HITTJumpBoxPublicSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enabling ssh
+      VpcId: !Ref HITTVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+      Tags:
+        - Key: Name
+          Value: HITTJumpBoxPublicSecurityGroup
+
+  #Creating a jump box to connect instances in private subnet
+
+  HITTPublicJumpBox:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceTypeParameter
+      SubnetId: !Ref HITTPublicsubnet
+      VpcId: !Ref HITTVPC
+      ImageId: !FindInMap
+        - AMIRegionMap
+        - !Ref AWS::Region
+        - !Ref Environment
+      KeyName: Sidkey
+      SecurityGroupIds:
+        - !Ref HITTJumpBoxPublicSecurityGroup
+
+      Tags:
+        - Key: Name
+          Value: HITTPublicJumpBox
+
+  #Creating a Private subnet 
+  HITTprivatesubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref HITTVPC
+      CidrBlock: 10.0.0.128/26
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select
+        - 0
+        - !GetAZs ''
+      Tags:
+        - Key: Name
+          Value: HITTprivatesubnet
+
+  #Creating a elastic IP for private instances access 
+  HITTElasticIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  #Creating a Natgateway for private instances 
+  HITTNatgateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      SubnetId: !Ref HITTPublicsubnet
+      AllocationId: !GetAtt HITTElasticIp.AllocationId
+      Tags:
+        - Key: Name
+          Value: HITTNatgateway
+
+  #Creating a private route table 
+  HITTprivateroutetable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref HITTVPC
+      Tags:
+        - Key: Name
+          Value: HITTprivateroutetable
+
+  #Enabling the private subnet association
+  HITTprivatesubnetassociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref HITTprivateroutetable
+      SubnetId: !Ref HITTprivatesubnet
+
+  #Enabling the private route
+  HITTprivateroute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref HITTprivateroutetable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref HITTNatgateway
+
+  #Creating an private ec2 instances
+  HITTprivateEc2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceTypeParameter
+      SubnetId: !Ref HITTprivatesubnet
+      VpcId: !Ref HITTVPC
+      ImageId: !FindInMap
+        - AMIRegionMap
+        - !Ref AWS::Region
+        - !Ref Environment
+      KeyName: Sidkey
+      SecurityGroupIds:
+        - !Ref HITTPrivateSecurityGroup
+      Tags:
+        - Key: Name
+          Value: HITTprivateEc2
+
+  #Creating a security group for private ec2 instances
+  HITTPrivateSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enabling the  SSH (port 22)
+      VpcId: !Ref HITTVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !Ref HITTJumpBoxPublicSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          DestinationSecurityGroupId: !Ref HITTPublicSecurityGroup
+
+      Tags:
+        - Key: Name
+          Value: HITTPrivateSecurityGroup
+
+Outputs:
+  OutputofHITTVPC:
+    Description: Information or name of the VPC created
+    Value: !Ref HITTVPC
+
+  OutputofHITTInternetGateway:
+    Description: Information or name of the InternetGateway created
+    Value: !Ref HITTInternetGateway
+
+  OutputofPublicSubnet:
+    Description: Information or name of the PublicSubnet created
+    Value: !Ref HITTPublicsubnet
+
+  OutputofPublicRoute:
+    Description: Information or name of the Public route created
+    Value: !Ref HITTPublicroute
+
+  OutputofPublicROuteTable:
+    Description: Information or name of the Public route table created
+    Value: !Ref HITTPublicSubnetroutetable
+
+  OutputofPublicSubnetRouteAssociation:
+    Description: Information or name of the Public Subnet route association created
+    Value: !Ref HITTpublicsubnetassociation
+
+  OutputofPublicEc2isntance:
+    Description: Information or name of the Public Subnet EC2 instance created
+    Value: !Ref HITTpubliceEc2
+
+  OutputofSecurityGroupOfPublicEc2isntance:
+    Description: Information or name of the security group of Public Subnet EC2 instance created
+    Value: !Ref HITTPublicSecurityGroup
+
+  OutputofJumpboxEc2isntance:
+    Description: Information or name of the Jumpbox in Public Subnet EC2 instance created
+    Value: !Ref HITTPublicJumpBox
+
+  OutputofSecurityGroupOfJumpboxEc2isntance:
+    Description: Information or name of the security group of Jumpbox in Subnet EC2 instance created
+    Value: !Ref HITTJumpBoxPublicSecurityGroup
+
+  OutputofElasticIP:
+    Description: Information or name of the elastic IP created
+    Value: !Ref HITTElasticIp
+
+  OutputofNatgateway:
+    Description: Information or name of the natgateway  created
+    Value: !Ref HITTNatgateway
+
+  OutputofPrivateRoutetable:
+    Description: Information or name of the private route table created
+    Value: !Ref HITTprivateroutetable
+
+  OutputofPrivateRoutesubnetassociation:
+    Description: Information or name of the private route subnet association created
+    Value: !Ref HITTprivatesubnetassociation
+
+  OutputofPrivateSubnet:
+    Description: Information or name of the Private Subnet created
+    Value: !Ref HITTprivatesubnet
+
+  OutputofPrivateroute:
+    Description: Information or name of the Private route created
+    Value: !Ref HITTprivateroute
+
+  OutputofPrivateEC2:
+    Description: Information or name of the Private EC2 created
+    Value: !Ref HITTprivateEc2
+
+  OutputofPrivateEC2SecurityGroup:
+    Description: Information or name of the security group of Private EC2 created
+    Value: !Ref HITTPrivateSecurityGroup
